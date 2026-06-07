@@ -1,0 +1,144 @@
+# Required-field schemas for outbound customer invoices.
+# This file is the ONLY authority for what is mandatory (see instructions.md §4.3).
+# Field rules must NEVER be hardcoded in source.
+#
+# Each field entry:
+#   path:      dot/bracket path used to locate the field in the normalized payload
+#   label:     human-friendly name shown in Power BI
+#   severity:  CRITICAL | HIGH | MEDIUM | LOW
+#   condition: (optional) only required when this expression is true.
+#              Supported form: "<other_path> == <value>"  or  "<other_path> != <value>"
+
+version: "1.4.0"
+
+# -------------------------------------------------------------------------
+# ANSI X12 810 — Invoice
+# Paths reference the normalized invoice model (see src/models.py),
+# which the parsers map both X12 and EDIFACT into.
+# -------------------------------------------------------------------------
+x12_810:
+  description: "ANSI X12 810 Invoice — base mandatory fields"
+  fields:
+    - path: header.invoice_number          # BIG02
+      label: "Invoice Number"
+      severity: CRITICAL
+    - path: header.invoice_date            # BIG01
+      label: "Invoice Date"
+      severity: CRITICAL
+    - path: header.purchase_order_number   # BIG04
+      label: "Purchase Order Number"
+      severity: HIGH
+    - path: parties.remit_to.name          # N1*RI
+      label: "Remit-To Name"
+      severity: HIGH
+    - path: parties.bill_to.name           # N1*BT
+      label: "Bill-To Name"
+      severity: CRITICAL
+    - path: parties.ship_to.name           # N1*ST
+      label: "Ship-To Name"
+      severity: HIGH
+    - path: parties.bill_to.id_code        # N1*BT id
+      label: "Bill-To Identifier"
+      severity: HIGH
+    - path: totals.invoice_amount          # TDS01
+      label: "Total Invoice Amount"
+      severity: CRITICAL
+    - path: totals.line_item_count         # CTT01
+      label: "Line Item Count (CTT)"
+      severity: HIGH
+    - path: currency_code                  # CUR02
+      label: "Currency Code"
+      severity: HIGH
+    - path: tax.amount                     # TXI02
+      label: "Tax Amount"
+      severity: MEDIUM
+      condition: "tax.indicator == Y"
+    - path: lines[].product_id             # IT1*07/IT1 product
+      label: "Line: Product ID"
+      severity: CRITICAL
+    - path: lines[].quantity               # IT102
+      label: "Line: Quantity"
+      severity: CRITICAL
+    - path: lines[].unit_price             # IT104
+      label: "Line: Unit Price"
+      severity: CRITICAL
+    - path: lines[].uom                    # IT103
+      label: "Line: Unit of Measure"
+      severity: HIGH
+
+# -------------------------------------------------------------------------
+# UN/EDIFACT INVOIC
+# -------------------------------------------------------------------------
+edifact_invoic:
+  description: "UN/EDIFACT INVOIC — base mandatory fields"
+  fields:
+    - path: header.invoice_number          # BGM C106
+      label: "Invoice Number"
+      severity: CRITICAL
+    - path: header.invoice_date            # DTM 137
+      label: "Invoice Date"
+      severity: CRITICAL
+    - path: header.purchase_order_number   # RFF ON
+      label: "Purchase Order Reference"
+      severity: HIGH
+    - path: parties.supplier.name          # NAD SU
+      label: "Supplier Name"
+      severity: CRITICAL
+    - path: parties.supplier.vat_id        # NAD/RFF VA
+      label: "Supplier VAT ID"
+      severity: HIGH
+    - path: parties.buyer.name             # NAD BY
+      label: "Buyer Name"
+      severity: CRITICAL
+    - path: parties.buyer.gln              # NAD BY GLN
+      label: "Buyer GLN"
+      severity: HIGH
+    - path: totals.invoice_amount          # MOA 77 (amount payable)
+      label: "Total Payable Amount"
+      severity: CRITICAL
+    - path: totals.taxable_amount          # MOA 125
+      label: "Total Taxable Amount"
+      severity: HIGH
+    - path: currency_code                  # CUX
+      label: "Currency Code"
+      severity: CRITICAL
+    - path: tax.amount                     # MOA 124
+      label: "Tax Amount"
+      severity: MEDIUM
+      condition: "tax.indicator != E"      # required unless exempt (E)
+    - path: lines[].product_id             # LIN C212
+      label: "Line: Product ID (EAN/GTIN)"
+      severity: CRITICAL
+    - path: lines[].quantity               # QTY 47
+      label: "Line: Invoiced Quantity"
+      severity: CRITICAL
+    - path: lines[].unit_price             # PRI AAA
+      label: "Line: Unit Price"
+      severity: CRITICAL
+    - path: lines[].line_amount            # MOA 203
+      label: "Line: Line Amount"
+      severity: HIGH
+
+# -------------------------------------------------------------------------
+# Per-trading-partner overrides (instructions.md §4.6).
+# Keyed by customer_code. 'extra_required' adds fields on top of the base
+# standard; 'relax' removes a base field for that partner.
+# -------------------------------------------------------------------------
+trading_partner_overrides:
+  ACME-US:
+    standard: x12_810
+    extra_required:
+      - path: header.department_number
+        label: "Department Number"
+        severity: HIGH
+      - path: parties.ship_to.id_code
+        label: "Ship-To DUNS"
+        severity: HIGH
+  GLOBEX-EU:
+    standard: edifact_invoic
+    extra_required:
+      - path: parties.buyer.vat_id
+        label: "Buyer VAT ID"
+        severity: CRITICAL
+    relax:
+      - parties.buyer.gln

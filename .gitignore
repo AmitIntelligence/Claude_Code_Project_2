@@ -1,0 +1,17 @@
+# Secrets / connections — NEVER commit real credentials
+.env
+config/connections.env
+*.secret
+
+# Agent runtime output
+data/exceptions.csv
+data/agent_heartbeat.json
+data/logs/
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/

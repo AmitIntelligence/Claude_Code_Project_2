@@ -1,0 +1,13 @@
+# Core
+PyYAML>=6.0
+
+# HTTP source clients (OIC / Cleo). Optional at import time — the agent degrades
+# gracefully if absent, but install for live source polling.
+requests>=2.31
+
+# SQL sink (Azure SQL / SQL Server). Optional — CSV sink works without it.
+# Requires the Microsoft ODBC Driver 18 for SQL Server on the host.
+pyodbc>=5.0
+
+# Tests
+pytest>=8.0
