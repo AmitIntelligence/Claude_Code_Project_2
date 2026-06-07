@@ -1,0 +1,84 @@
+// =====================================================================
+// DAX measures for the OIC Invoice Quality dashboard.
+// Paste each measure into Power BI (Modeling > New measure).
+// Fact table: oic_invoice_exceptions
+// Optional unpivoted table: exceptions_fields_unpivoted (one row per missing field)
+// Heartbeat table: agent_heartbeat
+// =====================================================================
+
+// ---- Core counts -----------------------------------------------------
+Open Exceptions =
+CALCULATE ( DISTINCTCOUNT ( oic_invoice_exceptions[exception_id] ),
+            oic_invoice_exceptions[status] = "OPEN" )
+
+Total Exceptions = DISTINCTCOUNT ( oic_invoice_exceptions[exception_id] )
+
+Integrations Affected =
+CALCULATE ( DISTINCTCOUNT ( oic_invoice_exceptions[integration_name] ),
+            oic_invoice_exceptions[status] = "OPEN" )
+
+Customers Affected =
+CALCULATE ( DISTINCTCOUNT ( oic_invoice_exceptions[customer_code] ),
+            oic_invoice_exceptions[status] = "OPEN" )
+
+Total Missing Fields = SUM ( oic_invoice_exceptions[missing_field_count] )
+
+// ---- Severity breakdown ---------------------------------------------
+Critical Exceptions =
+CALCULATE ( [Open Exceptions], oic_invoice_exceptions[severity] = "CRITICAL" )
+
+High Exceptions =
+CALCULATE ( [Open Exceptions], oic_invoice_exceptions[severity] = "HIGH" )
+
+// ---- Quality rate ----------------------------------------------------
+// Requires a [Total Invoices Processed] measure or a separate volume table.
+// If only exceptions are available, interpret as "documents flagged".
+Pct Invoices With Missing Fields =
+VAR flagged = [Open Exceptions]
+VAR processed =
+    MAXX ( agent_heartbeat, agent_heartbeat[records_processed] )
+RETURN DIVIDE ( flagged, processed )
+
+// ---- Ageing ----------------------------------------------------------
+Avg Exception Age (days) =
+AVERAGEX (
+    FILTER ( oic_invoice_exceptions, oic_invoice_exceptions[status] = "OPEN" ),
+    DATEDIFF ( oic_invoice_exceptions[first_seen_at], NOW (), DAY )
+)
+
+Stale Exceptions (>3d) =
+CALCULATE (
+    [Open Exceptions],
+    FILTER ( oic_invoice_exceptions,
+        DATEDIFF ( oic_invoice_exceptions[first_seen_at], NOW (), DAY ) > 3 )
+)
+
+// ---- Trend -----------------------------------------------------------
+Exceptions (7d trend) =
+CALCULATE ( [Total Exceptions],
+    DATESINPERIOD ( Calendar[Date], MAX ( Calendar[Date] ), -7, DAY ) )
+
+// ---- Flag for the "Flagged Integrations" table -----------------------
+Integration Flag =
+VAR sev =
+    CALCULATE ( MAX ( oic_invoice_exceptions[severity] ) )
+RETURN
+SWITCH ( TRUE (),
+    [Open Exceptions] = 0, "✅ Clean",
+    sev = "CRITICAL", "🔴 Critical",
+    sev = "HIGH", "🟠 High",
+    sev = "MEDIUM", "🟡 Medium",
+    "⚪ Low" )
+
+// ---- Agent liveness / source health ---------------------------------
+Agent Last Run =
+MAXX ( agent_heartbeat, agent_heartbeat[last_run_at] )
+
+Agent Health =
+VAR alert = SELECTEDVALUE ( agent_heartbeat[alert] )
+VAR mins = DATEDIFF ( [Agent Last Run], NOW (), MINUTE )
+RETURN
+SWITCH ( TRUE (),
+    alert = TRUE (), "🔴 Source degraded",
+    mins > 15, "🟠 Stale (no recent run)",
+    "🟢 Healthy" )

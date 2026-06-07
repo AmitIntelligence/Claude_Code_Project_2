@@ -1,0 +1,91 @@
+# Runtime settings for the OIC Invoice Quality Agent.
+# Secrets are NEVER stored here — only references resolved from env (see connections.example.env).
+
+agent:
+  name: "oic-invoice-quality-agent"
+  # Path to the guardrails file the agent loads and honors on every run.
+  instructions_file: "instructions.md"
+  read_only: true            # HARD guardrail — must remain true (instructions.md §5.1)
+
+schedule:
+  poll_interval_seconds: 300 # how often a monitoring run executes
+  max_records_per_run: 5000  # blast-radius cap per source per run
+  lookback_minutes: 60       # only inspect instances/documents from the last N minutes
+  backoff:
+    base_seconds: 2          # exponential backoff base for 429/5xx
+    max_retries: 5
+    max_seconds: 60
+
+scope:
+  # Only outbound invoice integrations matching these patterns are monitored.
+  direction: "outbound"
+  integration_name_patterns:
+    - "*INVOICE*"
+    - "*INV_OUT*"
+    - "*810*"
+    - "*INVOIC*"
+  document_types:
+    - "810"
+    - "INVOIC"
+
+# Which payload sources to read. Enable any/all. All are READ-ONLY.
+sources:
+  oic_api:
+    enabled: true
+    base_url_env: "OIC_BASE_URL"
+    # Monitoring + audit endpoints (relative to base_url).
+    instances_path: "/ic/api/integration/v1/monitoring/instances"
+    errors_path: "/ic/api/integration/v1/monitoring/errors"
+    audit_path: "/ic/api/integration/v1/monitoring/auditrecords"
+    page_size: 100
+  staging_files:
+    enabled: true
+    # Drop zone OIC writes to before Cleo collects. Read/list only.
+    directory_env: "STAGING_DIR"
+    glob_patterns:
+      - "*.edi"
+      - "*.x12"
+      - "*.txt"
+      - "*.xml"
+    # Files older than this are assumed already collected; skip to bound work.
+    max_age_minutes: 120
+  cleo_api:
+    enabled: true
+    base_url_env: "CLEO_BASE_URL"
+    transmissions_path: "/api/transfers"
+    errors_path: "/api/errors"
+    page_size: 100
+
+# Privacy / data-minimization (instructions.md §5.4).
+privacy:
+  redact: true               # store presence/absence only, never raw values
+  store_payload: false       # NEVER store full payloads
+  pii_field_labels_only: true
+
+# Output sinks — append/upsert only, never destructive (instructions.md §5.6).
+sinks:
+  csv:
+    enabled: true
+    path: "data/exceptions.csv"
+  sql:
+    enabled: true
+    # Connection string resolved from env. Example for Azure SQL / SQL Server.
+    conn_str_env: "BI_SQL_CONN_STR"
+    table: "dbo.oic_invoice_exceptions"
+    # The agent uses MERGE/upsert; it must NEVER TRUNCATE or DROP.
+    upsert: true
+
+heartbeat:
+  path: "data/agent_heartbeat.json"
+  degraded_alert_after_consecutive_runs: 3
+
+logging:
+  dir: "data/logs"
+  level: "INFO"
+  redact_values: true        # never log raw payload values, PII, or secrets
+
+# Optional, informational-only notifications (instructions.md §5.9).
+notifications:
+  enabled: false
+  on_severity_at_least: "CRITICAL"
+  webhook_url_env: "ALERT_WEBHOOK_URL"
