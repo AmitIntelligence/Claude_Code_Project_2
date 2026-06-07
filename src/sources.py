@@ -69,6 +69,61 @@ def _lookback_cutoff(settings: dict[str, Any]) -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# Oracle Fusion Cloud Financials — Receivables (AR) invoices : SYSTEM OF ORIGIN
+# Read-only. Used both as (a) an early-detection source for ERP-origin data gaps
+# and (b) the reference index for root-cause attribution of downstream defects.
+# ---------------------------------------------------------------------------
+class FusionERPSource:
+    name = "fusion_erp"
+
+    def __init__(self, settings: dict[str, Any]):
+        self.s = settings
+        self.cfg = settings["sources"]["fusion_erp"]
+
+    def _headers(self) -> dict[str, str]:
+        token = config.env("FUSION_BEARER_TOKEN")
+        if token:
+            return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        import base64
+        user, pwd = config.env("FUSION_USERNAME"), config.env("FUSION_PASSWORD")
+        if not user:
+            raise SourceUnavailable("No Fusion credentials (FUSION_BEARER_TOKEN or FUSION_USERNAME)")
+        basic = base64.b64encode(f"{user}:{pwd}".encode()).decode()
+        return {"Authorization": f"Basic {basic}", "Accept": "application/json"}
+
+    def fetch(self) -> Iterable[NormalizedInvoice]:
+        base = config.env(self.cfg["base_url_env"])
+        if not base:
+            raise SourceUnavailable("FUSION_BASE_URL not set")
+        url = base.rstrip("/") + self.cfg["invoices_path"]
+        # Read-only query: recent AR invoices, expand lines child resource.
+        params = {
+            "limit": self.cfg["page_size"],
+            "onlyData": "true",
+            "expand": self.cfg.get("expand", "receivablesInvoiceLines"),
+            "orderBy": "TransactionDate:desc",
+        }
+        resp = _http("GET", url, self.s, headers=self._headers(), params=params)
+        for rec in resp.json().get("items", []):
+            payload = parsers.parse_fusion_ar_invoice(rec)
+            std = self.cfg.get("default_edi_standard", "x12_810")
+            yield NormalizedInvoice(
+                source=Source.FUSION_ERP,
+                integration_id=str(rec.get("BusinessUnit", "FUSION-AR")),
+                integration_name="FUSION_AR_INVOICE",
+                instance_id=str(rec.get("CustomerTransactionId", rec.get("TransactionNumber", ""))),
+                document_id=str(payload["header"].get("invoice_number") or ""),
+                customer_code=str(rec.get("BillToCustomerAccountNumber",
+                                          rec.get("BillToCustomerNumber", ""))),
+                customer_name=str(rec.get("BillToCustomerName", "")),
+                edi_standard=std,
+                document_type="810" if std == "x12_810" else "INVOIC",
+                transmission_status="ERP_SOURCE",
+                payload=payload,
+            )
+
+
+# ---------------------------------------------------------------------------
 # OIC Monitoring/Audit REST API
 # ---------------------------------------------------------------------------
 class OICSource:
@@ -253,7 +308,12 @@ def _matches_scope(integration_name: str, settings: dict[str, Any]) -> bool:
 
 
 def build_sources(settings: dict[str, Any]) -> list[Any]:
-    """Instantiate the enabled sources."""
+    """Instantiate the enabled DOWNSTREAM sources (OIC / staging / Cleo).
+
+    Fusion ERP is handled separately (see build_fusion_source) because it is the
+    system of origin: it serves as the reference index for root-cause attribution
+    and is validated first for early ERP-origin detection.
+    """
     out = []
     src_cfg = settings["sources"]
     if src_cfg["oic_api"]["enabled"]:
@@ -263,3 +323,10 @@ def build_sources(settings: dict[str, Any]) -> list[Any]:
     if src_cfg["cleo_api"]["enabled"]:
         out.append(CleoSource(settings))
     return out
+
+
+def build_fusion_source(settings: dict[str, Any]) -> "FusionERPSource | None":
+    """Instantiate the Fusion ERP source if enabled, else None."""
+    if settings["sources"].get("fusion_erp", {}).get("enabled"):
+        return FusionERPSource(settings)
+    return None

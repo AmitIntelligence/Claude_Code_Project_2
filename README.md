@@ -1,17 +1,23 @@
 # OIC Invoice Quality Agent
 
-A read-only monitoring agent that continuously watches **Oracle Integration Cloud
-(OIC) outbound invoice integrations** — the ones that transmit customer invoices
-through **Cleo** to **customers** over **EDI** — and flags any invoice **payload
-that leaves OIC with missing required fields**. Detected exceptions are published
-to a **Power BI dashboard** that flags the affected integrations.
+A read-only monitoring agent for the outbound customer-invoice flow that
+**originates in Oracle Fusion Cloud Financials (AR)**, is integrated/translated by
+**Oracle Integration Cloud (OIC)**, transmitted via **Cleo**, and delivered to
+**customers** over **EDI**. It flags any invoice with **missing required fields**
+at any stage, **attributes the root cause** (Fusion ERP data gap vs OIC mapping
+loss), and publishes exceptions to a **Power BI dashboard** that flags the
+affected integrations.
 
 ```
-OIC  ──payload──▶  Cleo  ──EDI──▶  Customer
- │                  │
- └──────┬───────────┘
-        ▼  (read-only)
-  OIC Invoice Quality Agent  ──▶  exceptions (SQL + CSV)  ──▶  Power BI dashboard
+Fusion Cloud ERP (AR) ──▶ OIC ──▶ Cleo ──EDI──▶ Customer
+        │                  │        │
+        └────────┬─────────┴────────┘
+                 ▼  (read-only)
+   OIC Invoice Quality Agent
+     • validate required fields at each stage
+     • attribute defect_origin: ERP_SOURCE vs OIC_MAPPING
+                 ▼
+   exceptions (SQL + CSV) ──▶ Power BI dashboard
 ```
 
 > **Guardrails first.** Read [`instructions.md`](instructions.md) — it defines
@@ -21,18 +27,22 @@ OIC  ──payload──▶  Cleo  ──EDI──▶  Customer
 
 ## What it does
 
-1. **Polls** (on a cadence) three read-only payload sources — any/all enabled:
+1. **Polls** (on a cadence) four read-only sources — any/all enabled:
+   - **Oracle Fusion Cloud Financials (AR) REST API** — `receivablesInvoices` (the **system of origin**)
    - OIC Monitoring/Audit REST API
    - File staging drop zone (where OIC writes before Cleo collects)
    - Cleo Integration Cloud / VLTrader / Harmony APIs
-2. **Parses** X12 810 and EDIFACT INVOIC invoices into one normalized shape.
+2. **Parses** Fusion AR invoices, X12 810, and EDIFACT INVOIC into one normalized shape.
 3. **Validates** each invoice against the required-field schema in
    [`config/required_fields.yaml`](config/required_fields.yaml), including
    per-trading-partner overrides and conditional fields.
-4. **Records exceptions** (presence/labels only — no raw values or PII) to
+4. **Attributes root cause** by comparing the downstream payload to the Fusion
+   source invoice: `ERP_SOURCE` (missing in Fusion AR) vs `OIC_MAPPING` (dropped
+   in OIC). Catches ERP-origin gaps early ("shift left").
+5. **Records exceptions** (presence/labels only — no raw values or PII) to
    **SQL** (`dbo.oic_invoice_exceptions`) and **CSV** (`data/exceptions.csv`).
-5. **Publishes a heartbeat** for agent/source liveness.
-6. Feeds the **Power BI dashboard** (see [`powerbi/`](powerbi/)).
+6. **Publishes a heartbeat** for agent/source liveness.
+7. Feeds the **Power BI dashboard** (see [`powerbi/`](powerbi/)).
 
 ## Layout
 
@@ -42,10 +52,11 @@ OIC  ──payload──▶  Cleo  ──EDI──▶  Customer
 | `config/required_fields.yaml` | The only authority for mandatory fields (810 + INVOIC + partner overrides). |
 | `config/settings.yaml` | Runtime settings (cadence, scope, sources, sinks, privacy). |
 | `config/connections.example.env` | Credential template (copy to `.env`). |
-| `src/agent.py` | Main monitoring loop. |
-| `src/sources.py` | Read-only OIC / staging / Cleo readers. |
-| `src/parsers.py` | X12 810 + EDIFACT INVOIC → normalized payload. |
+| `src/agent.py` | Main monitoring loop (Fusion index → ERP early-detection → downstream + attribution). |
+| `src/sources.py` | Read-only Fusion ERP / OIC / staging / Cleo readers. |
+| `src/parsers.py` | Fusion AR + X12 810 + EDIFACT INVOIC → normalized payload. |
 | `src/validator.py` | Missing-required-field detection. |
+| `src/rootcause.py` | Defect-origin attribution (ERP_SOURCE vs OIC_MAPPING). |
 | `src/exception_store.py` | CSV + SQL upsert sinks. |
 | `powerbi/` | Dashboard spec, DAX measures, data dictionary. |
 | `data/sample_payloads/` | Example invoices for the demo/tests. |

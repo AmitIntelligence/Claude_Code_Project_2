@@ -4,6 +4,11 @@ This spec implements the dashboard requirements in `instructions.md §8`. Build 
 in Power BI Desktop against the `oic_invoice_exceptions` dataset (see
 `data_dictionary.md`) and the measures in `measures.dax`.
 
+> **Flow monitored:** `Oracle Fusion Cloud ERP (AR) → OIC → Cleo → Customer (EDI)`.
+> Each exception carries a `source` (which stage it was caught at) and a
+> `defect_origin` (`ERP_SOURCE` vs `OIC_MAPPING`) so the dashboard can route the
+> fix to the Fusion AR team or the OIC integration team.
+
 ## How to build (one-time)
 
 1. **Get Data**
@@ -30,15 +35,17 @@ in Power BI Desktop against the `oic_invoice_exceptions` dataset (see
 | Left | Donut | Exceptions by `severity` (legend), value `[Open Exceptions]` |
 | Center | **Clustered bar — Flagged Integrations** | Axis `integration_name`, value `[Open Exceptions]`, color by `severity`; sort desc. **This is the core "flag" view.** |
 | Right | Bar | Exceptions by `customer_name` (top N = 10) |
+| Mid row | **Donut — Defect Origin** | Legend `defect_origin`, value `[Open Exceptions]`; plus cards `[ERP Source Defects]`, `[OIC Mapping Defects]`, `[Pct Defects From ERP]`. Shows whether root cause is Fusion AR vs OIC mapping. |
 | Bottom | Line | `[Total Exceptions]` by `Calendar[Date]` (trend) |
 
-Add a **slicer** row: `edi_standard`, `severity`, `source`, `customer_name`, date range.
+Add a **slicer** row: `edi_standard`, `severity`, `source`, `defect_origin`, `customer_name`, date range.
 
 ## Page 2 — Flagged Integrations (detail / drill-through)
 
 - **Table** (the actionable list):
   `integration_name`, `integration_version`, `document_type`, `[Integration Flag]`,
   `[Open Exceptions]`, `[Total Missing Fields]`, `[Critical Exceptions]`,
+  `[ERP Source Defects]`, `[OIC Mapping Defects]`, `[Owning Team]`,
   `[Avg Exception Age (days)]`, `[Stale Exceptions (>3d)]`.
   - Conditional formatting: data bars on `[Open Exceptions]`; color `[Integration Flag]`.
   - Sort: `severity` desc, then `[Open Exceptions]` desc.
@@ -54,10 +61,11 @@ Add a **slicer** row: `edi_standard`, `severity`, `source`, `customer_name`, dat
 - **Matrix:** rows `missing_field`, columns `customer_name`, values count — reveals
   partner-specific gaps (e.g., one customer always missing *Buyer VAT ID*).
 - **100% stacked column:** `missing_field` share by `edi_standard` (810 vs INVOIC).
+- **Stacked bar — field by origin:** `missing_field` (axis) by `defect_origin` (legend) — instantly shows which fields are an ERP data gap vs an OIC mapping loss.
 
 ## Page 4 — Operations / Health
 
-- **Source health** matrix from `agent_heartbeat[source_health]` (OIC / staging / Cleo → OK/DEGRADED).
+- **Source health** matrix from `agent_heartbeat[source_health]` (Fusion ERP / OIC / staging / Cleo → OK/DEGRADED).
 - **Cards:** `records_processed`, `exceptions_found`, `errors`, `[Agent Last Run]`, `config_hash`.
 - **Trend:** exceptions/day split by `source`.
 - **Alert banner:** a card bound to `agent_heartbeat[alert]` that turns red when a

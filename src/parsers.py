@@ -168,6 +168,84 @@ def parse_structured(payload: dict[str, Any]) -> dict[str, Any]:
     return payload or {}
 
 
+# ---------------------------------------------------------------------------
+# Oracle Fusion Cloud Financials — Receivables (AR) invoice
+# Maps the receivablesInvoices REST resource (+ child lines) into the SAME
+# normalized payload tree, so root-cause attribution can compare the ERP source
+# against the downstream payload using one path vocabulary (instructions.md §4a).
+# ---------------------------------------------------------------------------
+def parse_fusion_ar_invoice(rec: dict[str, Any]) -> dict[str, Any]:
+    """Map a Fusion AR receivablesInvoices record to the normalized shape.
+
+    Field name variants from common Fusion REST/BIP/BICC shapes are tolerated.
+    In Fusion AR the deploying company is the supplier and the customer is the
+    bill-to/buyer, so both X12 and EDIFACT party paths are populated.
+    """
+    def pick(*names: str) -> Any:
+        for n in names:
+            if n in rec and str(rec.get(n)).strip() not in ("", "None"):
+                return rec.get(n)
+        return None
+
+    cust_name = pick("BillToCustomerName", "BillToCustomer", "CustomerName")
+    cust_acct = pick("BillToCustomerAccountNumber", "BillToCustomerNumber", "CustomerAccountNumber")
+    ship_name = pick("ShipToCustomerName", "ShipToCustomer")
+
+    payload: dict[str, Any] = {
+        "header": {
+            "invoice_number": pick("TransactionNumber", "InvoiceNumber", "DocumentNumber"),
+            "invoice_date": pick("TransactionDate", "InvoiceDate"),
+            "purchase_order_number": pick("PurchaseOrder", "CustomerPoNumber", "PurchaseOrderNumber"),
+            "department_number": pick("DepartmentNumber", "Department"),
+        },
+        "parties": {
+            "bill_to": {"name": cust_name, "id_code": cust_acct},
+            "buyer": {
+                "name": cust_name,
+                "gln": pick("BillToCustomerGln", "CustomerGln"),
+                "vat_id": pick("BillToCustomerTaxRegistrationNumber", "CustomerTaxRegistrationNumber"),
+            },
+            "ship_to": {"name": ship_name, "id_code": pick("ShipToCustomerSiteNumber", "ShipToSiteNumber")},
+            "remit_to": {"name": pick("RemitToName", "BusinessUnit")},
+            "supplier": {
+                "name": pick("BusinessUnit", "LegalEntity", "RemitToName"),
+                "vat_id": pick("LegalEntityTaxRegistrationNumber", "FirstPartyTaxRegistrationNumber"),
+            },
+        },
+        "currency_code": pick("InvoiceCurrencyCode", "CurrencyCode"),
+        "totals": {
+            "invoice_amount": pick("EnteredAmount", "InvoiceAmount", "TotalAmount"),
+            "taxable_amount": pick("TaxableAmount", "EnteredTaxableAmount"),
+            "line_item_count": pick("LineCount", "NumberOfLines"),
+        },
+        "tax": {
+            "amount": pick("TaxAmount", "EnteredTaxAmount"),
+            "indicator": pick("TaxClassificationCode", "TaxStatus"),
+        },
+        "lines": [],
+    }
+
+    raw_lines = rec.get("receivablesInvoiceLines") or rec.get("lines") or rec.get("InvoiceLines") or []
+    if isinstance(raw_lines, dict):  # REST sometimes wraps children in {"items": [...]}
+        raw_lines = raw_lines.get("items", [])
+    for ln in raw_lines:
+        def lpick(*names: str) -> Any:
+            for n in names:
+                if n in ln and str(ln.get(n)).strip() not in ("", "None"):
+                    return ln.get(n)
+            return None
+        payload["lines"].append({
+            "product_id": lpick("InventoryItemNumber", "ItemNumber", "MemoLineName", "Description"),
+            "quantity": lpick("Quantity", "InvoicedQuantity"),
+            "unit_price": lpick("UnitSellingPrice", "UnitPrice"),
+            "uom": lpick("UnitOfMeasureCode", "UOMCode", "UnitOfMeasure"),
+            "line_amount": lpick("LineAmount", "ExtendedAmount", "Amount"),
+        })
+    if payload["totals"]["line_item_count"] is None and payload["lines"]:
+        payload["totals"]["line_item_count"] = len(payload["lines"])
+    return payload
+
+
 def parse_raw(raw: str) -> tuple[str, dict[str, Any]]:
     """Detect standard and parse. Returns (edi_standard, payload)."""
     std = detect_standard(raw)

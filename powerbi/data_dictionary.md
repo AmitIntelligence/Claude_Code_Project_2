@@ -20,7 +20,7 @@ Plus a small companion source for agent liveness:
 | `exception_id` | text (PK) | Stable hash of integration+instance+document+missing-field set. Used for idempotent upsert. |
 | `run_id` | text | The monitoring run that last detected this exception. |
 | `detected_at` | datetime | When this exception was last detected (UTC). |
-| `source` | text | `OIC_API` / `STAGING_FILE` / `CLEO_API` — where the payload was read. |
+| `source` | text | `FUSION_ERP` / `OIC_API` / `STAGING_FILE` / `CLEO_API` — which stage the payload was read at. |
 | `integration_id` | text | OIC integration identifier. |
 | `integration_name` | text | OIC integration name (the thing the dashboard *flags*). |
 | `integration_version` | text | Integration version. |
@@ -33,6 +33,7 @@ Plus a small companion source for agent liveness:
 | `missing_fields` | text | `;`-separated list of the **labels** of missing required fields. |
 | `missing_field_count` | int | Number of missing fields in this document. |
 | `severity` | text | `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` — highest among the findings. |
+| `defect_origin` | text | Root cause: `ERP_SOURCE` (missing in Fusion AR) / `OIC_MAPPING` (dropped in OIC) / `MIXED` / `UNKNOWN`. Routes the fix to the right team. |
 | `transmission_status` | text | Status as reported by the source (e.g. `ERROR`, `SENT`, `STAGED`). |
 | `status` | text | Triage state: `OPEN` (default) / `ACK` / `RESOLVED`. Preserved across runs. |
 | `first_seen_at` | datetime | First detection (for ageing/trend). |

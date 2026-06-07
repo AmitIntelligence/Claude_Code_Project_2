@@ -102,6 +102,72 @@ def test_exception_id_is_stable_and_idempotent():
     assert make().exception_id == make().exception_id
 
 
+def test_root_cause_attribution_erp_vs_oic():
+    import json
+    import parsers
+    import rootcause
+    from models import DefectOrigin
+
+    # Build the ERP index from the Fusion AR sample.
+    fusion = json.loads((ROOT / "data/sample_payloads/fusion_ar_invoices.json").read_text())
+    idx = rootcause.ErpIndex()
+    erp_payload = None
+    for rec in fusion["items"]:
+        p = parsers.parse_fusion_ar_invoice(rec)
+        idx.add(p["header"]["invoice_number"], p)
+        erp_payload = p
+    assert len(idx) == 1
+    # Fusion record HAS currency/total/product_id but is MISSING purchase order.
+    assert erp_payload["currency_code"] == "USD"
+    assert erp_payload["totals"]["invoice_amount"] in (62.5, "62.5", 62.50)
+
+    # Downstream payload that dropped fields present in Fusion + lacks PO (also missing in Fusion).
+    raw = (ROOT / "data/sample_payloads/invoice_x12_810_oic_dropped_fields.edi").read_text()
+    std, payload = parsers.parse_raw(raw)
+
+    class _Inv:
+        pass
+    inv = _Inv()
+    inv.payload = payload
+    schema = config.resolve_schema(REQUIRED, std, "ACME-US")
+    findings = validate(inv, schema)
+    erp = idx.get(payload["header"]["invoice_number"])
+    assert erp is not None, "downstream invoice should match a Fusion source record"
+    rootcause.attribute(findings, erp)
+
+    origin = {f.field_label: f.defect_origin for f in findings}
+    # Present in Fusion, dropped downstream => OIC_MAPPING
+    assert origin["Total Invoice Amount"] == DefectOrigin.OIC_MAPPING
+    assert origin["Currency Code"] == DefectOrigin.OIC_MAPPING
+    assert origin["Line: Product ID"] == DefectOrigin.OIC_MAPPING
+    assert origin["Ship-To Name"] == DefectOrigin.OIC_MAPPING
+    # Missing in Fusion too => ERP_SOURCE
+    assert origin["Purchase Order Number"] == DefectOrigin.ERP_SOURCE
+    assert origin["Department Number"] == DefectOrigin.ERP_SOURCE
+
+
+def test_attribution_unknown_without_erp_source():
+    import rootcause
+    from models import DefectOrigin, Finding, Severity
+    findings = [Finding("header.invoice_number", "Invoice Number", Severity.CRITICAL)]
+    rootcause.attribute(findings, None)
+    assert findings[0].defect_origin == DefectOrigin.UNKNOWN
+
+
+def test_exception_defect_origin_is_mixed():
+    from models import DefectOrigin, Finding, InvoiceException, Severity
+    exc = InvoiceException(
+        run_id="r", detected_at="t", source="OIC_API", integration_id="i",
+        integration_name="n", integration_version="", instance_id="", document_id="",
+        customer_code="", customer_name="", edi_standard="x12_810", document_type="810",
+        findings=[
+            Finding("a", "A", Severity.HIGH, DefectOrigin.ERP_SOURCE),
+            Finding("b", "B", Severity.HIGH, DefectOrigin.OIC_MAPPING),
+        ],
+    )
+    assert exc.defect_origin == "MIXED"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -23,9 +23,10 @@ from pathlib import Path
 from typing import Any
 
 import config
+import rootcause
 from exception_store import ExceptionStore
 from models import InvoiceException, utcnow_iso
-from sources import SourceUnavailable, build_sources
+from sources import SourceUnavailable, build_fusion_source, build_sources
 from validator import validate
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -88,6 +89,25 @@ class HeartbeatTracker:
         }, indent=2), encoding="utf-8")
 
 
+def _make_exception(invoice, findings, run_id: str) -> InvoiceException:
+    return InvoiceException(
+        run_id=run_id,
+        detected_at=utcnow_iso(),
+        source=invoice.source.value,
+        integration_id=invoice.integration_id,
+        integration_name=invoice.integration_name,
+        integration_version=invoice.integration_version,
+        instance_id=invoice.instance_id,
+        document_id=invoice.document_id,
+        customer_code=invoice.customer_code,
+        customer_name=invoice.customer_name,
+        edi_standard=invoice.edi_standard,
+        document_type=invoice.document_type,
+        transmission_status=invoice.transmission_status,
+        findings=findings,
+    )
+
+
 def run_once(settings: dict[str, Any], required: dict[str, Any],
              store: ExceptionStore, heartbeat: HeartbeatTracker,
              logger: logging.Logger) -> dict[str, Any]:
@@ -98,7 +118,40 @@ def run_once(settings: dict[str, Any], required: dict[str, Any],
     exceptions: list[InvoiceException] = []
     source_health: dict[str, str] = {}
     processed = 0
+    erp_index = rootcause.ErpIndex()
 
+    def _schema_for(invoice):
+        return config.resolve_schema(required, invoice.edi_standard, invoice.customer_code)
+
+    # --- Stage 1: Fusion ERP (system of origin) -----------------------------
+    # Build the reference index AND flag ERP-origin data gaps at the earliest
+    # point in the flow (shift-left), before invoices ever reach OIC/Cleo.
+    fusion = build_fusion_source(settings)
+    if fusion is not None:
+        try:
+            for inv in fusion.fetch():
+                processed += 1
+                if not inv.edi_standard:
+                    continue
+                erp_index.add(inv.document_id, inv.payload)
+                findings = validate(inv, _schema_for(inv))
+                if findings:
+                    # Missing at the source is, by definition, an ERP_SOURCE defect.
+                    from models import DefectOrigin
+                    for f in findings:
+                        f.defect_origin = DefectOrigin.ERP_SOURCE
+                    exceptions.append(_make_exception(inv, findings, run_id))
+            source_health[fusion.name] = "OK"
+            logger.info("Fusion ERP index built: %d source invoice(s)", len(erp_index))
+        except SourceUnavailable as exc:
+            source_health[fusion.name] = "DEGRADED"
+            logger.error("Source %s DEGRADED: %s — downstream defects will be UNKNOWN origin",
+                         fusion.name, exc)
+        except Exception as exc:  # noqa: BLE001
+            source_health[fusion.name] = "DEGRADED"
+            logger.error("Source %s unexpected error: %s", fusion.name, exc)
+
+    # --- Stage 2: downstream sources (OIC / staging / Cleo) -----------------
     for source in build_sources(settings):
         try:
             for invoice in source.fetch():
@@ -108,29 +161,16 @@ def run_once(settings: dict[str, Any], required: dict[str, Any],
                                    invoice.locator())
                     continue
                 try:
-                    schema = config.resolve_schema(
-                        required, invoice.edi_standard, invoice.customer_code)
+                    schema = _schema_for(invoice)
                 except KeyError as exc:
                     logger.error("Schema resolution failed: %s", exc)
                     continue
                 findings = validate(invoice, schema)
                 if findings:
-                    exceptions.append(InvoiceException(
-                        run_id=run_id,
-                        detected_at=utcnow_iso(),
-                        source=invoice.source.value,
-                        integration_id=invoice.integration_id,
-                        integration_name=invoice.integration_name,
-                        integration_version=invoice.integration_version,
-                        instance_id=invoice.instance_id,
-                        document_id=invoice.document_id,
-                        customer_code=invoice.customer_code,
-                        customer_name=invoice.customer_name,
-                        edi_standard=invoice.edi_standard,
-                        document_type=invoice.document_type,
-                        transmission_status=invoice.transmission_status,
-                        findings=findings,
-                    ))
+                    # Attribute each defect: ERP_SOURCE vs OIC_MAPPING vs UNKNOWN.
+                    erp_payload = erp_index.get(invoice.document_id)
+                    rootcause.attribute(findings, erp_payload)
+                    exceptions.append(_make_exception(invoice, findings, run_id))
             source_health[source.name] = "OK"
         except SourceUnavailable as exc:
             source_health[source.name] = "DEGRADED"

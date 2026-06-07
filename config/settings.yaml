@@ -30,6 +30,19 @@ scope:
 
 # Which payload sources to read. Enable any/all. All are READ-ONLY.
 sources:
+  # Oracle Fusion Cloud Financials (AR) — the SYSTEM OF ORIGIN for the invoice.
+  # Used to (a) catch ERP-origin data gaps early and (b) attribute downstream
+  # defects to ERP_SOURCE vs OIC_MAPPING (root cause). Read-only.
+  fusion_erp:
+    enabled: true
+    base_url_env: "FUSION_BASE_URL"
+    # Receivables (AR) invoices REST resource.
+    invoices_path: "/fscmRestApi/resources/11.13.18.05/receivablesInvoices"
+    expand: "receivablesInvoiceLines"
+    page_size: 100
+    # EDI standard the AR invoices are translated into downstream (per-partner
+    # overrides still apply). Used to pick the validation schema for the source.
+    default_edi_standard: "x12_810"
   oic_api:
     enabled: true
     base_url_env: "OIC_BASE_URL"

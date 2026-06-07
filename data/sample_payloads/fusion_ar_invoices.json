@@ -1,0 +1,29 @@
+{
+  "items": [
+    {
+      "CustomerTransactionId": 300000123456789,
+      "TransactionNumber": "INV-2024-7788",
+      "TransactionDate": "2024-06-07",
+      "BusinessUnit": "US Sales BU",
+      "BillToCustomerName": "ACME CORP",
+      "BillToCustomerAccountNumber": "ACME-US",
+      "ShipToCustomerName": "ACME CORP WAREHOUSE 4",
+      "InvoiceCurrencyCode": "USD",
+      "EnteredAmount": 62.50,
+      "TaxAmount": 0,
+      "PurchaseOrder": null,
+      "receivablesInvoiceLines": {
+        "items": [
+          {
+            "LineNumber": 1,
+            "InventoryItemNumber": "WIDGET-1000",
+            "Description": "Blue Widget",
+            "Quantity": 5,
+            "UnitSellingPrice": 12.50,
+            "UnitOfMeasureCode": "EA"
+          }
+        ]
+      }
+    }
+  ]
+}

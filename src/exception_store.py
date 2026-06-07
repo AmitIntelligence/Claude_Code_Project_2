@@ -75,6 +75,7 @@ CREATE TABLE {table} (
     missing_fields       NVARCHAR(2000),
     missing_field_count  INT,
     severity             VARCHAR(16),
+    defect_origin        VARCHAR(16),
     transmission_status  VARCHAR(32),
     status               VARCHAR(16),
     first_seen_at        DATETIME2,
@@ -88,13 +89,13 @@ USING (SELECT ? AS exception_id) AS src
 ON (tgt.exception_id = src.exception_id)
 WHEN MATCHED THEN UPDATE SET
     last_seen_at = ?, missing_fields = ?, missing_field_count = ?,
-    severity = ?, transmission_status = ?, detected_at = ?, run_id = ?
+    severity = ?, defect_origin = ?, transmission_status = ?, detected_at = ?, run_id = ?
 WHEN NOT MATCHED THEN INSERT
     (exception_id, run_id, detected_at, source, integration_id, integration_name,
      integration_version, instance_id, document_id, customer_code, customer_name,
      edi_standard, document_type, missing_fields, missing_field_count, severity,
-     transmission_status, status, first_seen_at, last_seen_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+     defect_origin, transmission_status, status, first_seen_at, last_seen_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
 """
 
 
@@ -126,14 +127,15 @@ class SqlSink:
                     r["exception_id"],
                     # UPDATE params
                     r["last_seen_at"], r["missing_fields"], r["missing_field_count"],
-                    r["severity"], r["transmission_status"], r["detected_at"], r["run_id"],
+                    r["severity"], r["defect_origin"], r["transmission_status"],
+                    r["detected_at"], r["run_id"],
                     # INSERT params
                     r["exception_id"], r["run_id"], r["detected_at"], r["source"],
                     r["integration_id"], r["integration_name"], r["integration_version"],
                     r["instance_id"], r["document_id"], r["customer_code"], r["customer_name"],
                     r["edi_standard"], r["document_type"], r["missing_fields"],
-                    r["missing_field_count"], r["severity"], r["transmission_status"],
-                    r["status"], r["first_seen_at"], r["last_seen_at"],
+                    r["missing_field_count"], r["severity"], r["defect_origin"],
+                    r["transmission_status"], r["status"], r["first_seen_at"], r["last_seen_at"],
                 )
                 count += 1
             conn.commit()

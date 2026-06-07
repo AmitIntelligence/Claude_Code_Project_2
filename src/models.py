@@ -25,9 +25,20 @@ class Severity(str, Enum):
 
 
 class Source(str, Enum):
+    FUSION_ERP = "FUSION_ERP"   # Oracle Fusion Cloud Financials (AR) — system of origin
     OIC_API = "OIC_API"
     STAGING_FILE = "STAGING_FILE"
     CLEO_API = "CLEO_API"
+
+
+class DefectOrigin(str, Enum):
+    """Where a missing field originated, established by comparing the downstream
+    payload to the Fusion ERP source invoice (instructions.md §4a)."""
+
+    ERP_SOURCE = "ERP_SOURCE"      # field was never populated in Fusion AR
+    OIC_MAPPING = "OIC_MAPPING"    # field existed in Fusion but was dropped in OIC
+    MIXED = "MIXED"                # exception has both kinds of findings
+    UNKNOWN = "UNKNOWN"            # no Fusion source available to compare
 
 
 @dataclass
@@ -72,6 +83,11 @@ class Finding:
     field_path: str
     field_label: str
     severity: Severity
+    defect_origin: "DefectOrigin" = None  # set by the root-cause attributor
+
+    def __post_init__(self):
+        if self.defect_origin is None:
+            self.defect_origin = DefectOrigin.UNKNOWN
 
 
 @dataclass
@@ -125,6 +141,17 @@ class Exception_:
             return Severity.LOW.value
         return max((f.severity for f in self.findings), key=lambda s: s.rank).value
 
+    @property
+    def defect_origin(self) -> str:
+        """Aggregate origin across findings: ERP_SOURCE / OIC_MAPPING / MIXED / UNKNOWN."""
+        origins = {f.defect_origin for f in self.findings}
+        origins.discard(DefectOrigin.UNKNOWN)
+        if not origins:
+            return DefectOrigin.UNKNOWN.value
+        if len(origins) == 1:
+            return next(iter(origins)).value
+        return DefectOrigin.MIXED.value
+
     def to_row(self) -> dict[str, Any]:
         """Flat record honoring the §6 allow-list (presence/labels only)."""
         return {
@@ -144,6 +171,7 @@ class Exception_:
             "missing_fields": self.missing_fields,
             "missing_field_count": self.missing_field_count,
             "severity": self.severity,
+            "defect_origin": self.defect_origin,
             "transmission_status": self.transmission_status,
             "status": self.status,
             "first_seen_at": self.first_seen_at or self.detected_at,
@@ -160,7 +188,8 @@ EXCEPTION_COLUMNS = [
     "integration_id", "integration_name", "integration_version",
     "instance_id", "document_id", "customer_code", "customer_name",
     "edi_standard", "document_type", "missing_fields", "missing_field_count",
-    "severity", "transmission_status", "status", "first_seen_at", "last_seen_at",
+    "severity", "defect_origin", "transmission_status", "status",
+    "first_seen_at", "last_seen_at",
 ]
 
 

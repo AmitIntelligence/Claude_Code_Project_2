@@ -30,6 +30,29 @@ CALCULATE ( [Open Exceptions], oic_invoice_exceptions[severity] = "CRITICAL" )
 High Exceptions =
 CALCULATE ( [Open Exceptions], oic_invoice_exceptions[severity] = "HIGH" )
 
+// ---- Root-cause / defect origin (Fusion ERP vs OIC mapping) ----------
+ERP Source Defects =
+CALCULATE ( [Open Exceptions],
+    oic_invoice_exceptions[defect_origin] IN { "ERP_SOURCE", "MIXED" } )
+
+OIC Mapping Defects =
+CALCULATE ( [Open Exceptions],
+    oic_invoice_exceptions[defect_origin] IN { "OIC_MAPPING", "MIXED" } )
+
+Pct Defects From ERP =
+DIVIDE ( [ERP Source Defects], [ERP Source Defects] + [OIC Mapping Defects] )
+
+Pct Defects From OIC =
+DIVIDE ( [OIC Mapping Defects], [ERP Source Defects] + [OIC Mapping Defects] )
+
+// Routes the fix to the responsible team for the "Flagged Integrations" table.
+Owning Team =
+SWITCH ( SELECTEDVALUE ( oic_invoice_exceptions[defect_origin] ),
+    "ERP_SOURCE", "Fusion AR / ERP data",
+    "OIC_MAPPING", "OIC integration mapping",
+    "MIXED", "Both ERP + OIC",
+    "Needs Fusion source" )
+
 // ---- Quality rate ----------------------------------------------------
 // Requires a [Total Invoices Processed] measure or a separate volume table.
 // If only exceptions are available, interpret as "documents flagged".
